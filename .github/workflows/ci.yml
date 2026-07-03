@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (pinned by packageManager)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # The status line script is the security-critical artifact: it is wired
+      # into the user's Claude Code config and must stay local-only. The script
+      # is dependency-free ESM, so any network or process capability would have
+      # to arrive through one of these imports or globals — fail the build if
+      # any of them creeps in.
+      - name: Guard — statusline stays local-only
+        run: |
+          if grep -nE "fetch\(|XMLHttpRequest|WebSocket|child_process|require\(|import\(|from '(node:)?(http|https|net|tls|dgram)'" bin/idlepay-statusline.mjs; then
+            echo "::error::bin/idlepay-statusline.mjs must not gain network or process capabilities"
+            exit 1
+          fi
+          echo "statusline is clean"
+
+      - name: Package
+        run: pnpm package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: '*.vsix'

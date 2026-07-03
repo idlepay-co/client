@@ -1,0 +1,107 @@
+{
+  "name": "idlepay",
+  "displayName": "idlepay",
+  "description": "Earn revenue from sponsored spinner lines while you code with Claude Code.",
+  "version": "0.0.20",
+  "icon": "icon.png",
+  "publisher": "idlepay",
+  "license": "FSL-1.1-MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/idlepay-co/client"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "ai",
+    "revenue",
+    "ads",
+    "earn"
+  ],
+  "galleryBanner": {
+    "color": "#0f0f0f",
+    "theme": "dark"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "idlepay.signIn",
+        "title": "idlepay: Sign in"
+      },
+      {
+        "command": "idlepay.signOut",
+        "title": "idlepay: Sign out (pause earning on this device)"
+      },
+      {
+        "command": "idlepay.openDashboard",
+        "title": "idlepay: Open Earnings Dashboard"
+      },
+      {
+        "command": "idlepay.openAd",
+        "title": "idlepay: Open Current Ad"
+      },
+      {
+        "command": "idlepay.restoreSpinner",
+        "title": "idlepay: Restore Claude Code spinner to default"
+      }
+    ],
+    "configuration": {
+      "title": "idlepay",
+      "properties": {
+        "idlepay.apiUrl": {
+          "type": "string",
+          "default": "https://qrqt933izf.eu-west-1.awsapprunner.com",
+          "description": "idlepay API base URL."
+        },
+        "idlepay.patchSpinner": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show idlepay sponsored lines in the Claude Code spinner. OPT-IN: this modifies the local Claude Code binary (fully reversible via 'idlepay: Restore Claude Code spinner to default'). The extension asks once on first run; installs upgrading from \u22640.0.16 keep their previous behavior."
+        },
+        "claudeCode.spinnerVerbs": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Managed by idlepay \u2014 the sponsored spinner verbs shown in the Claude Code panel. Registered here so idlepay can write it via the settings API (Claude Code reads this key but does not contribute it, which otherwise makes `config.update` reject the write)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "vscode:prepublish": "pnpm run build",
+    "vscode:uninstall": "node ./dist/uninstall.js",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.0",
+    "@vscode/vsce": "^3.0.0"
+  },
+  "homepage": "https://idlepay.co",
+  "bugs": {
+    "url": "https://github.com/idlepay-co/client/issues"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@vscode/vsce-sign",
+      "keytar"
+    ]
+  }
+}

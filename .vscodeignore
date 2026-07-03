@@ -1,0 +1,14 @@
+.vscode/**
+.github/**
+scripts/**
+src/**
+tsconfig.json
+pnpm-lock.yaml
+SECURITY.md
+CONTRIBUTING.md
+**/*.map
+**/*.ts
+!dist/**/*.js
+node_modules/**
+pnpm-workspace.yaml
+.gitignore

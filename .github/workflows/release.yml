@@ -1,0 +1,44 @@
+name: Release
+
+# Publishing happens FROM this public repository so every marketplace version
+# is traceable to a commit and a public CI run. To cut a release:
+#   1. bump `version` in package.json (+ CHANGELOG), merge to main
+#   2. git tag v<version> && git push --tags
+# Requires the VSCE_PAT repository secret (Azure DevOps PAT, Marketplace:Manage).
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm package
+
+      - name: Tag must match package.json version
+        run: |
+          V=$(node -p "require('./package.json').version")
+          [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "::error::tag ${GITHUB_REF_NAME} != package version $V"; exit 1; }
+
+      - name: Publish to the VS Code Marketplace
+        run: npx vsce publish --no-dependencies --packagePath ./idlepay-*.vsix -p "$VSCE_PAT"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Attach vsix to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true

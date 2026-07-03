@@ -1,0 +1,8 @@
+packages:
+  - '.'
+# Dependency install runs ZERO build scripts — declared, not accidental.
+# (vsce-sign ships prebuilt binaries we don't use for packaging; keytar is
+# only needed for `vsce login`, and releases publish with an explicit PAT.)
+allowBuilds:
+  "@vscode/vsce-sign": false
+  keytar: false
