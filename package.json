@@ -2,7 +2,7 @@
   "name": "idlepay",
   "displayName": "idlepay",
   "description": "Earn revenue from sponsored spinner lines while you code with Claude Code.",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "icon": "icon.png",
   "publisher": "idlepay",
   "license": "FSL-1.1-MIT",

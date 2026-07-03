@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.21
+
+- Sharper marketplace icon.
+
 ## 0.0.20
 
 - **The client is now open source**: this release is the first one built from
