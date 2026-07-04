@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { Ad } from './types';
-import { clickThroughUrl, fetchDisplayAd, fetchEarnings, fetchProfile, fetchAdLabels, fetchSpinnerAds, postClick, pingImpression, setApiOrigin } from './api';
+import { clickThroughUrl, fetchDisplayAd, fetchEarnings, fetchProfile, fetchAdLabels, fetchSpinnerAds, pingImpression, setApiOrigin } from './api';
 import type { SpinnerAd } from './api';
 import { installStatusLine } from './statusline';
 import {
@@ -661,13 +661,13 @@ async function openCurrentAd(ad: Ad | null, developerId: string): Promise<void> 
     void vscode.window.showInformationMessage('idlepay: no link for this ad.');
     return;
   }
-  if (!isSafeHttpUrl(ad.url)) return;
-  // Count the click (reporting only, best-effort) before opening the landing
-  // page directly — the redirect endpoint is only for the terminal statusline.
-  if (ad.campaignId && ad.campaignId !== 'fallback') {
-    void postClick(ad.campaignId, developerId);
-  }
-  await vscode.env.openExternal(vscode.Uri.parse(ad.url));
+  // Open through the API's /r redirect (surface=extension): it counts the click
+  // (reporting only) AND appends idlepay attribution — UTM params + a unique
+  // idlepay_click_id + the served variant — to the landing URL, matching the
+  // statusline. Falls back to the raw url for the fallback ad.
+  const target = clickThroughUrl(ad, developerId, 'extension') ?? ad.url;
+  if (!isSafeHttpUrl(target)) return;
+  await vscode.env.openExternal(vscode.Uri.parse(target));
 }
 
 function isSafeHttpUrl(raw: string): boolean {

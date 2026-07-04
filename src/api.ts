@@ -86,16 +86,23 @@ export async function pingImpression(developerId: string, token: string): Promis
 }
 
 /**
- * Click-through URL for an ad rendered OUTSIDE the extension (the terminal
- * statusline). Routes through the API's /r/<campaignId> redirect so the click
- * is counted (reporting only), with the developer id attached for attribution.
- * Falls back to the raw landing URL for the fallback ad. The extension bakes
- * this into ~/.idlepay/ad-cache.json so the statusline script never needs to
- * know the API origin or the device identity.
+ * Click-through URL routed through the API's /r/<campaignId> redirect, which
+ * counts the click (reporting only) and 302s to the landing page with idlepay
+ * attribution appended (UTM params + a unique idlepay_click_id). `d` attaches
+ * the developer id, `v` the served creative variant (per-variant stats), and
+ * `s` the surface. Used both for the statusline (baked into
+ * ~/.idlepay/ad-cache.json) and the status-bar ad. Falls back to the raw
+ * landing URL for the fallback ad.
  */
-export function clickThroughUrl(ad: Ad, developerId: string): string | undefined {
+export function clickThroughUrl(
+  ad: Ad,
+  developerId: string,
+  surface: 'statusline' | 'extension' = 'statusline',
+): string | undefined {
   if (ad.campaignId && ad.campaignId !== 'fallback') {
-    return endpoint(`/r/${encodeURIComponent(ad.campaignId)}?d=${encodeURIComponent(developerId)}`);
+    const params = new URLSearchParams({ d: developerId, s: surface });
+    if (ad.variantId) params.set('v', ad.variantId);
+    return endpoint(`/r/${encodeURIComponent(ad.campaignId)}?${params.toString()}`);
   }
   return ad.url;
 }

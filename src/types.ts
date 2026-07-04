@@ -36,6 +36,13 @@ export interface Ad {
   /** Campaign this ad belongs to (an advertiser may run several). */
   campaignId: string;
 
+  /**
+   * Creative variant of the campaign that was served (A/B/C rotation). Passed
+   * back on click so the API can attribute clicks per variant. Absent for the
+   * fallback ad and campaigns with no variant layer.
+   */
+  variantId?: string;
+
   /** The sponsored text shown in the spinner. Kept short on purpose. */
   text: string;
 
