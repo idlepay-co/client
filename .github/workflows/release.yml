@@ -4,7 +4,10 @@ name: Release
 # is traceable to a commit and a public CI run. To cut a release:
 #   1. bump `version` in package.json (+ CHANGELOG), merge to main
 #   2. git tag v<version> && git push --tags
-# Requires the VSCE_PAT repository secret (Azure DevOps PAT, Marketplace:Manage).
+# Requires two repository secrets:
+#   - VSCE_PAT: Azure DevOps PAT (Marketplace:Manage) for the VS Code Marketplace
+#   - OVSX_PAT: Open VSX access token, for Cursor/Windsurf/VSCodium users
+#     (those editors read from Open VSX, not the MS Marketplace).
 on:
   push:
     tags: ['v*']
@@ -36,6 +39,11 @@ jobs:
         run: npx vsce publish --no-dependencies --packagePath ./idlepay-*.vsix -p "$VSCE_PAT"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX (Cursor / Windsurf / VSCodium)
+        run: npx ovsx publish ./idlepay-*.vsix -p "$OVSX_PAT"
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
 
       - name: Attach vsix to the GitHub release
         uses: softprops/action-gh-release@v2
