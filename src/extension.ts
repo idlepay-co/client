@@ -15,6 +15,7 @@ import {
   restoreSpinner,
   webviewPaths,
 } from './spinner-patch';
+import { applyCodexPatch, codexIndexPaths, restoreCodex } from './codex-webview-patch';
 
 const DEVELOPER_ID_KEY = 'idlepay.developerId';
 const DEVICE_TOKEN_KEY = 'idlepay.deviceToken';
@@ -22,6 +23,9 @@ const WELCOMED_KEY = 'idlepay.welcomed';
 // 'granted' | 'declined' — records the spinner-patch consent decision so the
 // prompt is shown at most once (a dismissed toast re-asks next activation).
 const SPINNER_CONSENT_KEY = 'idlepay.spinnerConsent';
+// 'granted' | 'declined' — the Codex opt-in decision, tracked independently of the
+// Claude spinner consent (a user may want one surface but not the other).
+const CODEX_CONSENT_KEY = 'idlepay.codexConsent';
 // Last-good ads/labels, so a pristine bundle can be re-baked even when the live
 // /ad fetch is momentarily empty (cold API right after boot).
 const SPINNER_ADS_CACHE_KEY = 'idlepay.spinnerAdsCache';
@@ -130,10 +134,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand(RESTORE_SPINNER_COMMAND, () => {
       const r = restoreSpinner();
+      const cx = restoreCodex();
+      const total = r.restored.length + cx.restored.length;
       void vscode.window.showInformationMessage(
-        r.restored.length > 0
-          ? `idlepay: restored ${r.restored.length} Claude Code binary(ies) to default. Reload the window / restart your session.`
-          : 'idlepay: nothing to restore (no patched binary found).',
+        total > 0
+          ? `idlepay: restored ${total} agent ad surface(s) to default (Claude Code + Codex). Reload the window / restart your session.`
+          : 'idlepay: nothing to restore (no patched surface found).',
       );
     }),
   );
@@ -157,13 +163,16 @@ export function activate(context: vscode.ExtensionContext): void {
   // and the refresh loops below stay unconditional because refreshSpinner
   // re-reads the setting on every tick and no-ops until it turns true.
   void ensureSpinnerConsent(context);
+  // Codex is a separate vendor's product, so it gets its OWN honest opt-in —
+  // never piggy-backed on the Claude answer — and only when Codex is installed.
+  void ensureCodexConsent(context);
 
   // Retry a few times early on: at activation the network may not be ready yet,
   // and refreshSpinner now no-ops on an empty fetch rather than clearing the
   // spinner. These catch-up attempts get ads in without waiting for the watchdog.
-  void refreshSpinner(context);
+  void refreshSpinner(context, developerId);
   for (const delay of [4_000, 15_000, 60_000]) {
-    const h = setTimeout(() => { void refreshSpinner(context); }, delay);
+    const h = setTimeout(() => { void refreshSpinner(context, developerId); }, delay);
     context.subscriptions.push({ dispose: () => clearTimeout(h) });
   }
 
@@ -176,7 +185,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ships/restores a new one (sidecar check) — this loop also recovers after a
   // Claude Code self-update. On a cold/empty fetch it keeps the last-good state and
   // retries next tick.
-  const spinnerWatchHandle = setInterval(() => { void refreshSpinner(context); }, SPINNER_WATCH_MS);
+  const spinnerWatchHandle = setInterval(() => { void refreshSpinner(context, developerId); }, SPINNER_WATCH_MS);
   context.subscriptions.push({ dispose: () => clearInterval(spinnerWatchHandle) });
 
   // --- Refresh on window focus — the 60s interval above is a background timer,
@@ -188,7 +197,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // update live (no reload once the parser is in).
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((s) => {
-      if (s.focused) void refreshSpinner(context);
+      if (s.focused) void refreshSpinner(context, developerId);
     }),
   );
 
@@ -259,7 +268,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const token = context.globalState.get<string>(DEVICE_TOKEN_KEY);
     if (!token) return; // not signed in → nothing to credit
     if (!vscode.window.state.focused && !(await hasFreshStatuslineHeartbeat())) return;
-    if (!(await hasRecentClaudeActivity())) return; // no live Claude session → no credit
+    // Credit when EITHER a Claude Code session OR a Codex session is genuinely
+    // active — the ad shows in both, so a Codex-only user must earn too.
+    if (!(await hasRecentClaudeActivity()) && !(await hasRecentCodexActivity())) return;
     void pingImpression(developerId, token);
   };
   void heartbeat(); // credit promptly on activation when already focused
@@ -434,6 +445,49 @@ async function hasRecentClaudeActivity(): Promise<boolean> {
   return false;
 }
 
+// --- Codex activity gate ---------------------------------------------------
+// Codex (the openai.chatgpt panel and the `codex` CLI alike) records each
+// session under ~/.codex, and rewrites ~/.codex/session_index.jsonl as sessions
+// progress. A recent mtime on that index — or on any recent rollout file under
+// ~/.codex/sessions — means a Codex session is genuinely active, the mirror of
+// the Claude transcript signal above.
+const CODEX_DIR = path.join(os.homedir(), '.codex');
+
+async function anyRecentFileUnder(dir: string, cutoff: number, depth: number): Promise<boolean> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    try {
+      if (e.isDirectory()) {
+        if (depth > 0 && (await anyRecentFileUnder(full, cutoff, depth - 1))) return true;
+      } else if ((await fs.promises.stat(full)).mtimeMs >= cutoff) {
+        return true;
+      }
+    } catch {
+      /* raced a deletion / permission — keep scanning */
+    }
+  }
+  return false;
+}
+
+async function hasRecentCodexActivity(): Promise<boolean> {
+  const cutoff = Date.now() - CLAUDE_ACTIVITY_WINDOW_MS;
+  try {
+    if ((await fs.promises.stat(path.join(CODEX_DIR, 'session_index.jsonl'))).mtimeMs >= cutoff) {
+      return true;
+    }
+  } catch {
+    /* index not present → fall through to the sessions sweep */
+  }
+  // sessions/ is nested by date (e.g. sessions/YYYY/MM/DD/rollout-*.jsonl).
+  return anyRecentFileUnder(path.join(CODEX_DIR, 'sessions'), cutoff, 4);
+}
+
 /**
  * Publish the device identity for the statusLine process to read. With a token
  * it credits (/ad/<deviceId>); without one the statusLine shows ads anonymously.
@@ -510,37 +564,41 @@ function microToUsd(microUsd: number): string {
 // --- helpers ------------------------------------------------------------------
 
 /**
- * Bake current ad labels into the Claude Code spinner. OPT-IN via the
- * `idlepay.patchSpinner` setting (see ensureSpinnerConsent for how it gets
- * set). Best-effort: failures are logged, never thrown.
+ * Bake the current ads into each opted-in agent surface: the Claude Code spinner
+ * (`idlepay.patchSpinner`) and the Codex panel (`idlepay.patchCodex`), gated
+ * independently (see ensureSpinnerConsent / ensureCodexConsent). Best-effort:
+ * failures are logged, never thrown.
  */
-async function refreshSpinner(context: vscode.ExtensionContext): Promise<void> {
-  const enabled = vscode.workspace
-    .getConfiguration('idlepay')
-    .get<boolean>('patchSpinner', false);
-  if (!enabled) return;
+async function refreshSpinner(
+  context: vscode.ExtensionContext,
+  developerId: string,
+): Promise<void> {
+  // Each surface is opt-in and INDEPENDENT: patchSpinner covers the Claude Code
+  // binary + panel spinner, patchCodex covers the Codex panel. A user may enable
+  // one without the other, so gate each block separately rather than the whole run.
+  const config = vscode.workspace.getConfiguration('idlepay');
+  const spinnerEnabled = config.get<boolean>('patchSpinner', false);
+  const codexEnabled = config.get<boolean>('patchCodex', false);
+  if (!spinnerEnabled && !codexEnabled) return;
 
   try {
-    // Native CLI binary patch (terminal / Homebrew claude) — plain text labels.
-    // Fall back to the last-known labels when the fetch comes back empty (cold
-    // API at boot), so a pristine binary is still re-baked instead of blanked.
-    let labels = await fetchAdLabels();
-    if (labels.length > 0) await context.globalState.update(SPINNER_LABELS_CACHE_KEY, labels);
-    else labels = context.globalState.get<string[]>(SPINNER_LABELS_CACHE_KEY) ?? [];
-    const r = applySpinnerPatch(labels);
-    console.log(
-      `[idlepay] binary spinner: patched ${r.patched.length}, skipped ${r.skipped.length}, failed ${r.failed.length}`,
-    );
-    for (const f of r.failed) console.warn(`[idlepay] binary spinner failed ${f.binary}: ${f.reason}`);
+    if (spinnerEnabled) {
+      // Native CLI binary patch (terminal / Homebrew claude) — plain text labels.
+      // Fall back to the last-known labels when the fetch comes back empty (cold
+      // API at boot), so a pristine binary is still re-baked instead of blanked.
+      let labels = await fetchAdLabels();
+      if (labels.length > 0) await context.globalState.update(SPINNER_LABELS_CACHE_KEY, labels);
+      else labels = context.globalState.get<string[]>(SPINNER_LABELS_CACHE_KEY) ?? [];
+      const r = applySpinnerPatch(labels);
+      console.log(
+        `[idlepay] binary spinner: patched ${r.patched.length}, skipped ${r.skipped.length}, failed ${r.failed.length}`,
+      );
+      for (const f of r.failed) console.warn(`[idlepay] binary spinner failed ${f.binary}: ${f.reason}`);
+    }
 
-    // VS Code spinner — rich ads (logo + brand colour + clickable link).
-    // 1. Each ad enters the rotation via claudeCode.spinnerVerbs as a verb packed
-    //    with its own styling ("TEXT␟{c,l,u}"), read live by Claude Code — so a new
-    //    ad updates colour/logo/link WITHOUT a reload once the parser is live.
-    // 2. applyWebviewPatch installs that parser. It's ad-independent (no data baked
-    //    in), so it re-patches only when Claude Code ships a pristine bundle.
-    // Claude Code restores a PRISTINE webview on every launch, so the cache
-    // fallback below still matters: it keeps pushing the last-good verbs after a
+    // Rich ads (logo + brand colour + clickable link) shared by the Claude Code
+    // panel spinner and the Codex bar. Both restore to a PRISTINE bundle on launch,
+    // so the cache fallback matters: it keeps pushing the last-good set after a
     // cold/empty fetch instead of blanking the rotation.
     let ads = await fetchSpinnerAds();
     if (ads.length > 0) await context.globalState.update(SPINNER_ADS_CACHE_KEY, ads);
@@ -550,23 +608,48 @@ async function refreshSpinner(context: vscode.ExtensionContext): Promise<void> {
       return;
     }
 
-    // Independent: a failure setting the verbs must NOT block the webview patch
-    // (and vice-versa). updateVSCodeSpinnerVerbs used to throw
-    // ("claudeCode.spinnerVerbs is not a registered configuration") and abort the
-    // whole refresh, so the webview never updated. The key is now declared in our
-    // package.json so config.update is accepted; the try/catch is belt-and-braces.
-    // Push packed (rich) verbs only when the live panel already carries our parser;
-    // otherwise push plain text so a pristine/old render never shows raw JSON.
-    try {
-      await updateVSCodeSpinnerVerbs(ads, webviewParserLiveAtLoad);
-    } catch (e) {
-      console.warn(`[idlepay] spinnerVerbs update failed: ${(e as Error).message}`);
+    // Route every in-panel ad click through /r so it is counted + attributed
+    // (UTM + idlepay_click_id + variant), exactly like the status-bar ad. The
+    // cached roster keeps campaignId/variantId; developerId is the earner. A
+    // distinct surface tag per render gives per-surface click stats. Falls back
+    // to the raw landing URL for the fallback ad (clickThroughUrl returns it).
+    const withClick = (surface: 'spinner' | 'codex'): SpinnerAd[] =>
+      ads.map((a) => ({ ...a, url: clickThroughUrl(a, developerId, surface) ?? a.url }));
+
+    if (spinnerEnabled) {
+      // 1. Each ad enters the rotation via claudeCode.spinnerVerbs as a verb packed
+      //    with its styling ("TEXT␟{c,l,u}"), read live by Claude Code — so a new ad
+      //    updates colour/logo/link WITHOUT a reload once the parser is live.
+      // 2. applyWebviewPatch installs that parser (ad-independent → re-patches only
+      //    when Claude Code ships a pristine bundle).
+      // Independent: a failure setting the verbs must NOT block the webview patch —
+      // updateVSCodeSpinnerVerbs is wrapped so a throw can't abort the rest. Push
+      // packed (rich) verbs only when the live panel already carries our parser;
+      // otherwise push plain text so a pristine/old render never shows raw JSON.
+      const claudeAds = withClick('spinner');
+      try {
+        await updateVSCodeSpinnerVerbs(claudeAds, webviewParserLiveAtLoad);
+      } catch (e) {
+        console.warn(`[idlepay] spinnerVerbs update failed: ${(e as Error).message}`);
+      }
+      const wv = applyWebviewPatch(claudeAds);
+      console.log(
+        `[idlepay] webview spinner: patched ${wv.patched.length}, skipped ${wv.skipped.length}, failed ${wv.failed.length}`,
+      );
+      for (const f of wv.failed) console.warn(`[idlepay] webview spinner failed ${f.binary}: ${f.reason}`);
     }
-    const wv = applyWebviewPatch(ads);
-    console.log(
-      `[idlepay] webview spinner: patched ${wv.patched.length}, skipped ${wv.skipped.length}, failed ${wv.failed.length}`,
-    );
-    for (const f of wv.failed) console.warn(`[idlepay] webview spinner failed ${f.binary}: ${f.reason}`);
+
+    if (codexEnabled) {
+      // Codex (openai.chatgpt) panel — the same rich roster rendered as an in-flow
+      // bar above the composer. The index.html patch is ad-independent (re-patched
+      // only when Codex ships a fresh bundle) while the roster rides in a separate
+      // assets/idlepay-ads.js rewritten on change.
+      const cx = applyCodexPatch(withClick('codex'));
+      console.log(
+        `[idlepay] codex webview: patched ${cx.patched.length}, skipped ${cx.skipped.length}, failed ${cx.failed.length}`,
+      );
+      for (const f of cx.failed) console.warn(`[idlepay] codex webview failed ${f.binary}: ${f.reason}`);
+    }
   } catch (err) {
     console.warn(`[idlepay] spinner patch error: ${(err as Error).message}`);
   }
@@ -640,6 +723,36 @@ async function ensureSpinnerConsent(context: vscode.ExtensionContext): Promise<v
     await context.globalState.update(SPINNER_CONSENT_KEY, 'granted');
   } else if (choice === 'No thanks') {
     await context.globalState.update(SPINNER_CONSENT_KEY, 'declined');
+  }
+}
+
+/**
+ * Resolve the Codex opt-in, once — mirrors ensureSpinnerConsent but stands on its
+ * own because Codex is a different vendor's product: we NEVER inherit the Claude
+ * answer or turn Codex on silently. It also fires only when Codex is actually
+ * installed, so users without it are never prompted, and (unlike the spinner)
+ * there is no "existing install ran with it on" migration — Codex support is new,
+ * so every user with Codex makes a fresh, explicit choice. An explicit
+ * `idlepay.patchCodex` setting always wins; a dismissed toast re-asks next
+ * activation, an answer is final.
+ */
+async function ensureCodexConsent(context: vscode.ExtensionContext): Promise<void> {
+  if (codexIndexPaths().length === 0) return; // no Codex installed → nothing to consent to
+  const config = vscode.workspace.getConfiguration('idlepay');
+  const explicit = config.inspect<boolean>('patchCodex');
+  if (explicit?.globalValue !== undefined || explicit?.workspaceValue !== undefined) return;
+  if (context.globalState.get<string>(CODEX_CONSENT_KEY)) return;
+
+  const choice = await vscode.window.showInformationMessage(
+    'idlepay: also show sponsored lines inside the OpenAI Codex panel? This patches your local Codex extension files — reversible anytime ("idlepay: Restore agent ad surfaces to default").',
+    'Enable Codex ads',
+    'No thanks',
+  );
+  if (choice === 'Enable Codex ads') {
+    await config.update('patchCodex', true, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(CODEX_CONSENT_KEY, 'granted');
+  } else if (choice === 'No thanks') {
+    await context.globalState.update(CODEX_CONSENT_KEY, 'declined');
   }
 }
 

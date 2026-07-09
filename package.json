@@ -2,7 +2,7 @@
   "name": "idlepay",
   "displayName": "idlepay",
   "description": "Earn revenue from sponsored spinner lines while you code with Claude Code.",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "icon": "icon.png",
   "publisher": "idlepay",
   "license": "FSL-1.1-MIT",
@@ -52,7 +52,7 @@
       },
       {
         "command": "idlepay.restoreSpinner",
-        "title": "idlepay: Restore Claude Code spinner to default"
+        "title": "idlepay: Restore agent ad surfaces to default (Claude Code + Codex)"
       }
     ],
     "configuration": {
@@ -66,7 +66,12 @@
         "idlepay.patchSpinner": {
           "type": "boolean",
           "default": false,
-          "description": "Show idlepay sponsored lines in the Claude Code spinner. OPT-IN: this modifies the local Claude Code binary (fully reversible via 'idlepay: Restore Claude Code spinner to default'). The extension asks once on first run; installs upgrading from \u22640.0.16 keep their previous behavior."
+          "description": "Show idlepay sponsored lines in the Claude Code spinner. OPT-IN: this modifies the local Claude Code binary (fully reversible via 'idlepay: Restore agent ad surfaces to default'). The extension asks once on first run; installs upgrading from \u22640.0.16 keep their previous behavior."
+        },
+        "idlepay.patchCodex": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show idlepay sponsored lines in the OpenAI Codex panel (openai.chatgpt). OPT-IN and independent of the Claude Code setting: this modifies the local Codex extension's webview files (fully reversible via 'idlepay: Restore agent ad surfaces to default'). The extension asks once, only if Codex is installed."
         },
         "claudeCode.spinnerVerbs": {
           "type": [

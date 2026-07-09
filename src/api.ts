@@ -95,9 +95,10 @@ export async function pingImpression(developerId: string, token: string): Promis
  * landing URL for the fallback ad.
  */
 export function clickThroughUrl(
-  ad: Ad,
+  // Minimal shape so both a full Ad and a SpinnerAd (spinner/Codex rosters) qualify.
+  ad: { campaignId?: string; variantId?: string; url?: string },
   developerId: string,
-  surface: 'statusline' | 'extension' = 'statusline',
+  surface: 'statusline' | 'extension' | 'spinner' | 'codex' = 'statusline',
 ): string | undefined {
   if (ad.campaignId && ad.campaignId !== 'fallback') {
     const params = new URLSearchParams({ d: developerId, s: surface });
@@ -174,6 +175,10 @@ export interface SpinnerAd {
   url?: string;
   color?: string;
   logo?: string;
+  // Carried so the render surfaces (Claude spinner webview, Codex bar) can route
+  // clicks through /r for counting + attribution — see clickThroughUrl.
+  campaignId?: string;
+  variantId?: string;
 }
 
 function toSpinnerAd(ad: Ad): SpinnerAd {
@@ -182,6 +187,8 @@ function toSpinnerAd(ad: Ad): SpinnerAd {
     url: ad.url,
     color: ad.style?.textColorHex,
     logo: ad.logoUrl,
+    campaignId: ad.campaignId,
+    variantId: ad.variantId,
   };
 }
 

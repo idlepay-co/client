@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.23
+
+- **Codex support**: idlepay can now show sponsored lines inside the OpenAI
+  Codex panel — a small bar above the composer — and the time you spend in
+  Codex now earns too. It's opt-in and separate from the Claude Code setting:
+  the extension asks once, only if Codex is installed, and it's reversible
+  anytime ("idlepay: Restore agent ad surfaces to default"). Clicks are tracked
+  through idlepay's redirect, same as the other surfaces.
+
 ## 0.0.22
 
 - Clicking a sponsored line now opens through idlepay's tracked redirect, so

@@ -25,6 +25,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { claudeBinaries, replaceFile, restoreSpinner, webviewPaths } from './spinner-patch';
+import { restoreCodex } from './codex-webview-patch';
 
 const IDLEPAY_DIR = path.join(os.homedir(), '.idlepay');
 const CLAUDE_SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
@@ -40,6 +41,16 @@ function main(): void {
     if (r.failed.length > 0) log.push(`restore failed: ${r.failed.join(', ')}`);
   } catch (err) {
     log.push(`restoreSpinner error: ${(err as Error).message}`);
+  }
+
+  // Codex (openai.chatgpt) panel — revert index.html and drop the injected
+  // assets/idlepay-*.js. Best-effort, like everything else here.
+  try {
+    const c = restoreCodex();
+    log.push(`codex restored: ${c.restored.join(', ') || '(none)'}`);
+    if (c.failed.length > 0) log.push(`codex restore failed: ${c.failed.join(', ')}`);
+  } catch (err) {
+    log.push(`restoreCodex error: ${(err as Error).message}`);
   }
 
   // Leave no idlepay files behind next to Claude Code. restoreSpinner only
@@ -58,6 +69,17 @@ function main(): void {
     for (const d of dirs) {
       sweepDirs.add(path.join(root, d, 'resources', 'native-binary'));
       sweepDirs.add(path.join(root, d, 'webview'));
+    }
+    // Codex webviews: catch stale versions restoreCodex (newest-only) skipped —
+    // the index.html backup/sidecar live in webview/, the injected scripts in
+    // webview/assets/.
+    let codexDirs: string[] = [];
+    try {
+      codexDirs = fs.readdirSync(root).filter((d) => d.startsWith('openai.chatgpt-'));
+    } catch { /* editor not installed */ }
+    for (const d of codexDirs) {
+      sweepDirs.add(path.join(root, d, 'webview'));
+      sweepDirs.add(path.join(root, d, 'webview', 'assets'));
     }
   }
   // Homebrew cask keeps old version dirs that may carry a sidecar from before
@@ -124,6 +146,13 @@ function sweepIdlepayFiles(dir: string): void {
     return;
   }
   for (const name of entries) {
+    // The Codex injected scripts have no ".idlepay-" infix — remove by exact name.
+    if (name === 'idlepay-ads.js' || name === 'idlepay-runtime.js') {
+      try {
+        fs.rmSync(path.join(dir, name), { force: true });
+      } catch { /* best effort */ }
+      continue;
+    }
     if (!name.includes('.idlepay-')) continue;
     const full = path.join(dir, name);
     if (name.endsWith('.idlepay-backup')) {
