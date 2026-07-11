@@ -47,6 +47,7 @@ const SIGNOUT_COMMAND = 'idlepay.signOut';
 const ACCOUNT_MENU_COMMAND = 'idlepay.accountMenu';
 const DASHBOARD_COMMAND = 'idlepay.openDashboard';
 const RESTORE_SPINNER_COMMAND = 'idlepay.restoreSpinner';
+const AD_SURFACES_COMMAND = 'idlepay.adSurfaces';
 const PORTAL_URL = 'https://idlepay.co';
 
 interface State {
@@ -100,7 +101,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // --- Ad status bar (right side) -------------------------------------------
   const adBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  adBar.command = OPEN_AD_COMMAND;
+  // adBar.command is owned by renderAd: it opens the current ad when an agent
+  // surface is on, or the ad-surfaces toggle menu when they're all off.
   renderAd(adBar, state);
   adBar.show();
   context.subscriptions.push(adBar);
@@ -201,6 +203,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // Keep the status bar's on/off hint in sync when a surface is toggled from the
+  // Settings UI (or by the activation consent flow) rather than our own menu.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('idlepay.patchSpinner') || e.affectsConfiguration('idlepay.patchCodex')) {
+        renderAd(adBar, state);
+      }
+    }),
+  );
+
   // --- One-time welcome (sign in directly after install) --------------------
   void maybeWelcome(context);
 
@@ -222,6 +234,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(ACCOUNT_MENU_COMMAND, async () => {
       const items: (vscode.QuickPickItem & { run: string })[] = [
         { label: '$(dashboard) Open dashboard', run: DASHBOARD_COMMAND },
+        {
+          label: '$(megaphone) Ad surfaces…',
+          description: 'Toggle Claude Code / Codex sponsored lines',
+          run: AD_SURFACES_COMMAND,
+        },
         {
           label: '$(sign-out) Sign out',
           description: 'Pause earning on this device',
@@ -247,6 +264,55 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(
         'idlepay: signed out on this device. Ads still show, but earning is paused until you sign in again.',
       );
+    }),
+  );
+
+  // --- Ad-surface toggles — a persistent, clickable control so the opt-in is
+  // discoverable long after the one-time activation toast is gone (someone who
+  // dismissed that toast otherwise had no obvious way back on). Each agent
+  // surface is an independent on/off row; Codex only appears when installed —
+  // mirroring ensureCodexConsent. NB these surfaces are reach only: crediting
+  // runs off the heartbeat regardless, so toggling never changes whether the
+  // user earns, only where sponsored lines render.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(AD_SURFACES_COMMAND, async () => {
+      const config = vscode.workspace.getConfiguration('idlepay');
+      const items = availableSurfaces().map((s) => {
+        const on = config.get<boolean>(s.key, false);
+        return {
+          label: `${on ? '$(check)' : '$(circle-slash)'} ${s.label}`,
+          description: on ? 'showing ads — click to turn off' : 'off — click to turn on',
+          surface: s,
+          on,
+        };
+      });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: 'idlepay — where to show sponsored agent lines (your earnings work either way)',
+      });
+      if (!pick) return;
+      const next = !pick.on;
+      await config.update(pick.surface.key, next, vscode.ConfigurationTarget.Global);
+      // Record consent too, so the one-time activation toast never re-fires for
+      // a surface the user has now decided on here.
+      await context.globalState.update(
+        pick.surface.key === 'patchSpinner' ? SPINNER_CONSENT_KEY : CODEX_CONSENT_KEY,
+        next ? 'granted' : 'declined',
+      );
+      if (next) {
+        await refreshSpinner(context, developerId); // bake immediately
+        void vscode.window.showInformationMessage(
+          `idlepay: ${pick.surface.label} ads on — reload the window / restart your session to see them.`,
+        );
+      } else {
+        // Tear down just this surface (restores are already per-surface).
+        const r = pick.surface.key === 'patchSpinner' ? restoreSpinner() : restoreCodex();
+        void vscode.window.showInformationMessage(
+          r.restored.length > 0
+            ? `idlepay: ${pick.surface.label} ads off — reload the window / restart your session.`
+            : `idlepay: ${pick.surface.label} ads off.`,
+        );
+      }
+      renderAd(adBar, state); // reflect the new on/off aggregate on the status bar now
     }),
   );
 
@@ -312,6 +378,18 @@ export function deactivate(): void {
 const JADE = '#12b981';
 
 function renderAd(item: vscode.StatusBarItem, state: State): void {
+  // No agent surface enabled → make that visible and one-click fixable, rather
+  // than leaving the opt-in buried behind a long-gone activation toast. Earnings
+  // are unaffected (see the heartbeat), so the copy invites without alarming.
+  if (!anySurfaceEnabled()) {
+    item.text = '$(circle-slash) idlepay: agent ads off';
+    item.tooltip =
+      'Sponsored lines are off in your Claude Code / Codex agents.\nClick to turn them on. (Your earnings and the status-bar ad are unaffected.)';
+    item.color = new vscode.ThemeColor('charts.yellow');
+    item.command = AD_SURFACES_COMMAND;
+    return;
+  }
+  item.command = OPEN_AD_COMMAND;
   if (!state.ad) {
     item.text = '$(sparkle) idlepay';
     item.tooltip = 'idlepay — sponsored, revenue-shared';
@@ -324,6 +402,21 @@ function renderAd(item: vscode.StatusBarItem, state: State): void {
     : 'Sponsored · idlepay';
   // Render each ad in its sponsor's brand colour when provided.
   item.color = hexColor(state.ad.style?.textColorHex) ?? JADE;
+}
+
+/** The agent ad surfaces available to toggle on this machine (Codex only if installed). */
+function availableSurfaces(): { key: 'patchSpinner' | 'patchCodex'; label: string }[] {
+  const surfaces: { key: 'patchSpinner' | 'patchCodex'; label: string }[] = [
+    { key: 'patchSpinner', label: 'Claude Code spinner' },
+  ];
+  if (codexIndexPaths().length > 0) surfaces.push({ key: 'patchCodex', label: 'Codex panel' });
+  return surfaces;
+}
+
+/** True when at least one agent ad surface (spinner or Codex) is opted in. */
+function anySurfaceEnabled(): boolean {
+  const config = vscode.workspace.getConfiguration('idlepay');
+  return config.get<boolean>('patchSpinner', false) || config.get<boolean>('patchCodex', false);
 }
 
 function hexColor(value: string | undefined): string | undefined {

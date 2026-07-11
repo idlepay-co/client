@@ -53,6 +53,10 @@
       {
         "command": "idlepay.restoreSpinner",
         "title": "idlepay: Restore agent ad surfaces to default (Claude Code + Codex)"
+      },
+      {
+        "command": "idlepay.adSurfaces",
+        "title": "idlepay: Ad surfaces (toggle Claude Code / Codex sponsored lines)"
       }
     ],
     "configuration": {
