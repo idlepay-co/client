@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.24
+
+- **Easier to turn sponsored lines on**: the status bar now shows when the
+  Claude Code / Codex sponsored lines are off and lets you switch them on in one
+  click, instead of only offering the choice in a one-time prompt right after
+  install. Clicking opens a small menu with an on/off row per surface (Codex
+  only shows when it's installed). This is about where ads appear — your
+  earnings work the same either way.
+
 ## 0.0.23
 
 - **Codex support**: idlepay can now show sponsored lines inside the OpenAI
