@@ -1,7 +1,7 @@
 {
   "name": "idlepay",
   "displayName": "idlepay",
-  "description": "Earn revenue from sponsored spinner lines while you code with Claude Code.",
+  "description": "Earn revenue from sponsored lines while you code with Claude Code (CLI & extension) or the OpenAI Codex extension panel — in VS Code, Cursor & Windsurf.",
   "version": "0.0.23",
   "icon": "icon.png",
   "publisher": "idlepay",
